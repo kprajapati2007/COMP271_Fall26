@@ -136,7 +136,7 @@ def contiguous_length(nums: list[int]) -> int:
         prefix.append(prefix[-1] + val)
         i += 1
 
-    # Check all subarrays (O(n^2) allowed)
+    # Check all subarrays
     longest = 0
     start = 0
     while start < len(prefix):
