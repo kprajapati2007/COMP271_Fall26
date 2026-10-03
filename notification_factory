@@ -1,0 +1,227 @@
+from abc import ABC, abstractmethod
+import inspect
+
+
+class Notification(ABC):
+    """A base notification with common validated fields."""
+
+    def __init__(self, recipient: str, title: str, body: str) -> None:
+        if not recipient or recipient.strip() == "":
+            raise ValueError("Recipient cannot be blank.")
+        if not title or title.strip() == "":
+            raise ValueError("Title cannot be blank.")
+        if not body or body.strip() == "":
+            raise ValueError("Body cannot be blank.")
+
+        self.__recipient = recipient
+        self.__title = title
+        self.__body = body
+
+    @property
+    def recipient(self) -> str:
+        return self.__recipient
+
+    @property
+    def title(self) -> str:
+        return self.__title
+
+    @property
+    def body(self) -> str:
+        return self.__body
+
+    @abstractmethod
+    def render(self) -> str:
+        """Return the channel-specific rendered message."""
+        ...
+
+    def summary(self) -> str:
+        """Return a short summary using only common fields."""
+        return f"{self.recipient}: {self.title}"
+
+
+class EmailNotification(Notification):
+    """Email notification with To, Subject, and full body."""
+
+    def render(self) -> str:
+        return f"To: {self.recipient}\nSubject: {self.title}\n\n{self.body}"
+
+
+class SMSNotification(Notification):
+    """SMS notification with strict length and single-line rules."""
+
+    MAX_LENGTH = 160
+
+    def __init__(self, recipient: str, title: str, body: str) -> None:
+        super().__init__(recipient, title, body)
+
+        if "\n" in title or "\n" in body:
+            raise ValueError("SMS cannot contain newline characters.")
+
+        message = f"{self.title}: {self.body}"
+        if len(message) > SMSNotification.MAX_LENGTH:
+            raise ValueError("SMS message exceeds 160 characters.")
+
+    def render(self) -> str:
+        return f"{self.title}: {self.body}"
+
+
+class InAppNotification(Notification):
+    """In-app notification with preview of body."""
+
+    PREVIEW_LENGTH = 40
+
+    def render(self) -> str:
+        preview = self.body[:InAppNotification.PREVIEW_LENGTH]
+        if len(self.body) > InAppNotification.PREVIEW_LENGTH:
+            preview += "..."
+        return f"{self.recipient}\n{self.title}\nPreview: {preview}"
+
+
+class NotificationFactory:
+    """Factory that creates notifications based on channel."""
+
+    _registry: dict[str, type[Notification]] = {
+        "email": EmailNotification,
+        "sms": SMSNotification,
+    }
+
+    @classmethod
+    def available_channels(cls) -> tuple[str, ...]:
+        return tuple(sorted(cls._registry.keys()))
+
+    @classmethod
+    def create(
+        cls, channel: str, recipient: str, title: str, body: str
+    ) -> Notification:
+        if channel not in cls._registry:
+            raise ValueError(f"Unknown channel: {channel}")
+
+        notification_class = cls._registry[channel]
+        return notification_class(recipient, title, body)
+
+    @classmethod
+    def register(cls, channel: str, notification_type: type[Notification]) -> None:
+        if not channel or channel.strip() == "":
+            raise ValueError("Channel cannot be blank.")
+
+        if channel in cls._registry:
+            raise ValueError(f"Channel '{channel}' is already registered.")
+
+        if not inspect.isclass(notification_type):
+            raise ValueError("notification_type must be a class.")
+
+        if not issubclass(notification_type, Notification):
+            raise ValueError("notification_type must be a subclass of Notification.")
+
+        if inspect.isabstract(notification_type):
+            raise ValueError("Cannot register an abstract class.")
+
+        cls._registry[channel] = notification_type
+
+
+def main() -> None:
+    """Run a scenario that uses the notification factory."""
+
+    print("Before registration:", NotificationFactory.available_channels())
+    NotificationFactory.register("in_app", InAppNotification)
+    print("After registration:", NotificationFactory.available_channels())
+    print()
+
+    # Email example
+    email = NotificationFactory.create(
+        "email",
+        "kennaoui@luc.edu",
+        "Room change",
+        "Class meets in Cuneo 218.",
+    )
+    print(type(email).__name__)
+    print(email.summary())
+    print(email.render())
+    print()
+
+    # TODO 1: Create SMS and InApp notifications
+    sms = NotificationFactory.create(
+        "sms",
+        "555-1234",
+        "Alert",
+        "Your package has arrived.",
+    )
+
+    long_body = "x" * 50  # longer than 40 chars
+    in_app = NotificationFactory.create(
+        "in_app",
+        "student@luc.edu",
+        "Update",
+        long_body,
+    )
+
+    notifications: list[Notification] = [email, sms, in_app]
+
+    # TODO 2: Loop and print summary + render
+    for note in notifications:
+        print(note.summary())
+        print(note.render())
+        print()
+
+    # Invalid cases
+    try:
+        NotificationFactory.create("email", "Sam", "  ", "Hello")
+        print("ERROR: blank title was accepted")
+    except ValueError as error:
+        print("Blank title rejected:", error)
+
+    print()
+
+    # TODO 3: All invalid requests
+
+    # (a) Unknown channel
+    try:
+        NotificationFactory.create("fax", "Sam", "Hi", "Hello")
+    except ValueError as error:
+        print("Unknown channel rejected:", error)
+
+    # (b) SMS too long
+    valid_body = "x" * 157
+    print("Length 160 SMS accepted length:", len("A: " + valid_body))
+    NotificationFactory.create("sms", "Sam", "A", valid_body)
+
+    try:
+        too_long_body = "x" * 158
+        NotificationFactory.create("sms", "Sam", "A", too_long_body)
+    except ValueError as error:
+        print("SMS too long rejected:", error)
+
+    # (c) SMS with newline
+    try:
+        NotificationFactory.create("sms", "Sam", "Hi", "Hello\nWorld")
+    except ValueError as error:
+        print("SMS newline rejected:", error)
+
+    # (d) Duplicate registration
+    try:
+        NotificationFactory.register("in_app", InAppNotification)
+    except ValueError as error:
+        print("Duplicate registration rejected:", error)
+
+    # (e) Registering an instance instead of class
+    try:
+        bad_instance = EmailNotification("Sam", "Hi", "Hello")
+        NotificationFactory.register("bad", bad_instance)
+    except ValueError as error:
+        print("Instance registration rejected:", error)
+
+    # (f) Registering abstract class
+    try:
+        NotificationFactory.register("abstract", Notification)
+    except ValueError as error:
+        print("Abstract class rejected:", error)
+
+    # (g) Creating Notification directly
+    try:
+        Notification("Sam", "Update", "Hello")
+    except TypeError as error:
+        print("Direct abstract creation rejected:", error)
+
+
+if __name__ == "__main__":
+    main()
